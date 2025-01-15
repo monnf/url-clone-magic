@@ -1,37 +1,53 @@
 export async function cloneWebpage(url: string): Promise<string> {
   // List of CORS proxies to try
   const proxyServices = [
-    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    (url: string) => `https://cors-anywhere.herokuapp.com/${url}`,
+    (url: string) => `https://crossorigin.me/${url}`
   ];
 
-  async function fetchWithRetry(url: string, attempts = 3): Promise<Response> {
+  async function fetchWithRetry(url: string, attempts = 3, timeout = 5000): Promise<Response> {
     for (let i = 0; i < attempts; i++) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
         const response = await fetch(url, {
+          signal: controller.signal,
           mode: 'cors',
           headers: {
             'Accept': '*/*',
           }
         });
+        
+        clearTimeout(timeoutId);
+        
         if (response.ok) return response;
+        throw new Error(`HTTP error! status: ${response.status}`);
       } catch (error) {
-        console.log(`Attempt ${i + 1} failed for ${url}`);
+        console.log(`Attempt ${i + 1} failed for ${url}:`, error);
         if (i === attempts - 1) throw error;
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
     throw new Error(`Failed to fetch after ${attempts} attempts`);
   }
 
   async function fetchWithProxies(targetUrl: string, isBinary = false): Promise<any> {
+    let lastError;
+    
     for (const proxyService of proxyServices) {
       try {
-        const response = await fetchWithRetry(proxyService(targetUrl));
+        const proxyUrl = proxyService(targetUrl);
+        console.log(`Trying proxy: ${proxyUrl}`);
+        
+        const response = await fetchWithRetry(proxyUrl);
         
         if (isBinary) {
-          const blob = await response.blob();
-          return blob;
+          return await response.blob();
         }
         
         const text = await response.text();
@@ -42,10 +58,17 @@ export async function cloneWebpage(url: string): Promise<string> {
         }
       } catch (error) {
         console.log(`Proxy failed: ${proxyService(targetUrl)}`);
+        lastError = error;
         continue;
       }
     }
-    throw new Error('All proxy services failed');
+    
+    if (isBinary) {
+      console.log(`All proxies failed for binary content: ${targetUrl}, keeping original URL`);
+      return null; // Return null for binary content to keep original URL
+    }
+    
+    throw lastError || new Error('All proxy services failed');
   }
 
   try {
@@ -82,16 +105,19 @@ export async function cloneWebpage(url: string): Promise<string> {
         try {
           const imageUrl = new URL(src, url).href;
           const blob = await fetchWithProxies(imageUrl, true);
-          const reader = new FileReader();
-          await new Promise((resolve) => {
-            reader.onload = () => {
-              img.src = reader.result as string;
-              resolve(null);
-            };
-            reader.readAsDataURL(blob);
-          });
+          if (blob) {
+            const reader = new FileReader();
+            await new Promise((resolve) => {
+              reader.onload = () => {
+                img.src = reader.result as string;
+                resolve(null);
+              };
+              reader.readAsDataURL(blob);
+            });
+          }
         } catch (error) {
           console.error('Failed to fetch image:', src);
+          // Keep original src
         }
       }
     }));
@@ -109,6 +135,7 @@ export async function cloneWebpage(url: string): Promise<string> {
           script.parentNode?.replaceChild(newScript, script);
         } catch (error) {
           console.error('Failed to fetch script:', src);
+          // Keep original script tag
         }
       }
     }));
