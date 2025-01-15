@@ -1,15 +1,20 @@
 export async function cloneWebpage(url: string): Promise<string> {
   // List of CORS proxies to try
   const proxyServices = [
-    (url: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}&charset=UTF-8`,
-    (url: string) => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(url)}`,
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
   ];
 
   async function fetchWithRetry(url: string, attempts = 3): Promise<Response> {
     for (let i = 0; i < attempts; i++) {
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, {
+          mode: 'cors',
+          headers: {
+            'Accept': '*/*',
+          }
+        });
         if (response.ok) return response;
       } catch (error) {
         console.log(`Attempt ${i + 1} failed for ${url}`);
@@ -19,12 +24,22 @@ export async function cloneWebpage(url: string): Promise<string> {
     throw new Error(`Failed to fetch after ${attempts} attempts`);
   }
 
-  async function fetchWithProxies(targetUrl: string): Promise<{ contents: string }> {
+  async function fetchWithProxies(targetUrl: string, isBinary = false): Promise<any> {
     for (const proxyService of proxyServices) {
       try {
         const response = await fetchWithRetry(proxyService(targetUrl));
-        const data = await response.json();
-        return data.contents ? { contents: data.contents } : { contents: data };
+        
+        if (isBinary) {
+          const blob = await response.blob();
+          return blob;
+        }
+        
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { contents: text };
+        }
       } catch (error) {
         console.log(`Proxy failed: ${proxyService(targetUrl)}`);
         continue;
@@ -54,8 +69,7 @@ export async function cloneWebpage(url: string): Promise<string> {
           style.textContent = cssData.contents;
           stylesheet.parentNode?.replaceChild(style, stylesheet);
         } catch (error) {
-          console.error('Failed to fetch stylesheet:', href, error);
-          // Keep the original stylesheet link if fetch fails
+          console.error('Failed to fetch stylesheet:', href);
         }
       }
     }));
@@ -67,8 +81,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const imageUrl = new URL(src, url).href;
-          const response = await fetchWithRetry(`https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`);
-          const blob = await response.blob();
+          const blob = await fetchWithProxies(imageUrl, true);
           const reader = new FileReader();
           await new Promise((resolve) => {
             reader.onload = () => {
@@ -78,8 +91,7 @@ export async function cloneWebpage(url: string): Promise<string> {
             reader.readAsDataURL(blob);
           });
         } catch (error) {
-          console.error('Failed to fetch image:', src, error);
-          // Keep the original image source if fetch fails
+          console.error('Failed to fetch image:', src);
         }
       }
     }));
@@ -96,8 +108,7 @@ export async function cloneWebpage(url: string): Promise<string> {
           newScript.textContent = scriptData.contents;
           script.parentNode?.replaceChild(newScript, script);
         } catch (error) {
-          console.error('Failed to fetch script:', src, error);
-          // Keep the original script tag if fetch fails
+          console.error('Failed to fetch script:', src);
         }
       }
     }));
