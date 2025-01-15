@@ -1,7 +1,10 @@
 export async function cloneWebpage(url: string): Promise<string> {
   try {
+    // Create a proxy URL to bypass CORS
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    
     // Fetch the webpage
-    const response = await fetch(url);
+    const response = await fetch(proxyUrl);
     if (!response.ok) {
       throw new Error('Failed to fetch webpage');
     }
@@ -18,7 +21,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (href) {
         try {
           const cssUrl = new URL(href, url).href;
-          const cssResponse = await fetch(cssUrl);
+          const cssResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(cssUrl)}`);
           const cssText = await cssResponse.text();
           const style = doc.createElement('style');
           style.textContent = cssText;
@@ -36,7 +39,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const imageUrl = new URL(src, url).href;
-          const imageResponse = await fetch(imageUrl);
+          const imageResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`);
           const blob = await imageResponse.blob();
           const reader = new FileReader();
           await new Promise((resolve) => {
@@ -52,12 +55,23 @@ export async function cloneWebpage(url: string): Promise<string> {
       }
     }));
 
-    // Process inline styles
-    const elements = doc.querySelectorAll('*[style]');
-    elements.forEach((element) => {
-      const computedStyle = window.getComputedStyle(element);
-      element.setAttribute('style', computedStyle.cssText);
-    });
+    // Process scripts
+    const scripts = Array.from(doc.querySelectorAll('script[src]'));
+    await Promise.all(scripts.map(async (script) => {
+      const src = script.getAttribute('src');
+      if (src) {
+        try {
+          const scriptUrl = new URL(src, url).href;
+          const scriptResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(scriptUrl)}`);
+          const scriptText = await scriptResponse.text();
+          const newScript = doc.createElement('script');
+          newScript.textContent = scriptText;
+          script.parentNode?.replaceChild(newScript, script);
+        } catch (error) {
+          console.error('Failed to fetch script:', src);
+        }
+      }
+    }));
 
     return doc.documentElement.outerHTML;
   } catch (error) {
