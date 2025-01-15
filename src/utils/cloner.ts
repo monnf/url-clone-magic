@@ -1,5 +1,5 @@
 export async function cloneWebpage(url: string): Promise<string> {
-  // List of CORS proxies to try
+  // Prioritize allorigins.win as the primary CORS proxy
   const proxyServices = [
     (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -22,7 +22,6 @@ export async function cloneWebpage(url: string): Promise<string> {
         
         clearTimeout(timeoutId);
         
-        // Skip 404 errors immediately
         if (response.status === 404) {
           throw new Error(`Resource not found: ${url}`);
         }
@@ -32,7 +31,6 @@ export async function cloneWebpage(url: string): Promise<string> {
       } catch (error) {
         console.log(`Attempt ${i + 1} failed for ${url}:`, error);
         if (i === attempts - 1) throw error;
-        // Exponential backoff
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
@@ -42,7 +40,6 @@ export async function cloneWebpage(url: string): Promise<string> {
   async function fetchWithProxies(targetUrl: string, isBinary = false): Promise<any> {
     let lastError;
     
-    // Try direct fetch first for binary content
     if (isBinary) {
       try {
         const response = await fetchWithRetry(targetUrl);
@@ -88,6 +85,9 @@ export async function cloneWebpage(url: string): Promise<string> {
     try {
       if (originalUrl.startsWith('data:')) return originalUrl;
       if (originalUrl.startsWith('blob:')) return originalUrl;
+      if (originalUrl.startsWith('//')) {
+        return `https:${originalUrl}`;
+      }
       const absoluteUrl = new URL(originalUrl, baseUrl).href;
       return absoluteUrl;
     } catch {
@@ -178,6 +178,12 @@ export async function cloneWebpage(url: string): Promise<string> {
         }
       }
     }));
+
+    // Add sandbox attribute to iframes
+    const iframes = Array.from(doc.querySelectorAll('iframe'));
+    iframes.forEach(iframe => {
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms');
+    });
 
     // Add base tag to handle relative URLs that weren't processed
     const baseTag = doc.createElement('base');
