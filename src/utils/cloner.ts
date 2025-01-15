@@ -1,14 +1,12 @@
 export async function cloneWebpage(url: string): Promise<string> {
   // List of CORS proxies to try
   const proxyServices = [
-    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-    (url: string) => `https://cors-anywhere.herokuapp.com/${url}`,
-    (url: string) => `https://crossorigin.me/${url}`
   ];
 
-  async function fetchWithRetry(url: string, attempts = 3, timeout = 5000): Promise<Response> {
+  async function fetchWithRetry(url: string, attempts = 3, timeout = 8000): Promise<Response> {
     for (let i = 0; i < attempts; i++) {
       try {
         const controller = new AbortController();
@@ -24,11 +22,17 @@ export async function cloneWebpage(url: string): Promise<string> {
         
         clearTimeout(timeoutId);
         
+        // Skip 404 errors immediately
+        if (response.status === 404) {
+          throw new Error(`Resource not found: ${url}`);
+        }
+        
         if (response.ok) return response;
         throw new Error(`HTTP error! status: ${response.status}`);
       } catch (error) {
         console.log(`Attempt ${i + 1} failed for ${url}:`, error);
         if (i === attempts - 1) throw error;
+        // Exponential backoff
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
@@ -37,6 +41,16 @@ export async function cloneWebpage(url: string): Promise<string> {
 
   async function fetchWithProxies(targetUrl: string, isBinary = false): Promise<any> {
     let lastError;
+    
+    // Try direct fetch first for binary content
+    if (isBinary) {
+      try {
+        const response = await fetchWithRetry(targetUrl);
+        return await response.blob();
+      } catch (error) {
+        console.log('Direct fetch failed, trying proxies');
+      }
+    }
     
     for (const proxyService of proxyServices) {
       try {
@@ -73,6 +87,7 @@ export async function cloneWebpage(url: string): Promise<string> {
   function processUrl(originalUrl: string, baseUrl: string): string {
     try {
       if (originalUrl.startsWith('data:')) return originalUrl;
+      if (originalUrl.startsWith('blob:')) return originalUrl;
       const absoluteUrl = new URL(originalUrl, baseUrl).href;
       return absoluteUrl;
     } catch {
@@ -107,7 +122,7 @@ export async function cloneWebpage(url: string): Promise<string> {
           style.textContent = cssData.contents;
           stylesheet.parentNode?.replaceChild(style, stylesheet);
         } catch (error) {
-          console.error('Failed to fetch stylesheet:', href);
+          console.warn('Failed to fetch stylesheet:', href);
         }
       }
     }));
@@ -142,7 +157,7 @@ export async function cloneWebpage(url: string): Promise<string> {
             });
           }
         } catch (error) {
-          console.error(`Failed to fetch media:`, srcAttr);
+          console.warn(`Failed to fetch media:`, srcAttr);
         }
       }
     }));
@@ -159,47 +174,10 @@ export async function cloneWebpage(url: string): Promise<string> {
           newScript.textContent = scriptData.contents;
           script.parentNode?.replaceChild(newScript, script);
         } catch (error) {
-          console.error('Failed to fetch script:', src);
+          console.warn('Failed to fetch script:', src);
         }
       }
     }));
-
-    // Process favicons and other link elements
-    const linkElements = Array.from(doc.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]'));
-    await Promise.allSettled(linkElements.map(async (link) => {
-      const href = link.getAttribute('href');
-      if (href) {
-        try {
-          const iconUrl = processUrl(href, url);
-          const blob = await fetchWithProxies(iconUrl, true);
-          if (blob) {
-            const reader = new FileReader();
-            await new Promise((resolve) => {
-              reader.onload = () => {
-                link.setAttribute('href', reader.result as string);
-                resolve(null);
-              };
-              reader.readAsDataURL(blob);
-            });
-          }
-        } catch (error) {
-          console.error('Failed to fetch icon:', href);
-        }
-      }
-    }));
-
-    // Process background images in inline styles
-    const elementsWithStyle = Array.from(doc.querySelectorAll('[style]'));
-    elementsWithStyle.forEach(element => {
-      const style = element.getAttribute('style');
-      if (style) {
-        const newStyle = style.replace(
-          /url\(['"]?([^'")\s]+)['"]?\)/g,
-          (match, p1) => `url("${processUrl(p1, url)}")`
-        );
-        element.setAttribute('style', newStyle);
-      }
-    });
 
     // Add base tag to handle relative URLs that weren't processed
     const baseTag = doc.createElement('base');
