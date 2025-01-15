@@ -1,12 +1,17 @@
 export async function cloneWebpage(url: string): Promise<string> {
   try {
-    // Create a proxy URL to bypass CORS
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    // Using cors-anywhere as an alternative proxy
+    const proxyUrl = `https://cors-anywhere.herokuapp.com/${url}`;
     
     // Fetch the webpage
-    const response = await fetch(proxyUrl);
+    const response = await fetch(proxyUrl, {
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+    
     if (!response.ok) {
-      throw new Error('Failed to fetch webpage');
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
     const html = await response.text();
 
@@ -21,13 +26,18 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (href) {
         try {
           const cssUrl = new URL(href, url).href;
-          const cssResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(cssUrl)}`);
+          const cssResponse = await fetch(`https://cors-anywhere.herokuapp.com/${cssUrl}`, {
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          if (!cssResponse.ok) throw new Error(`Failed to fetch CSS: ${cssResponse.status}`);
           const cssText = await cssResponse.text();
           const style = doc.createElement('style');
           style.textContent = cssText;
           stylesheet.parentNode?.replaceChild(style, stylesheet);
         } catch (error) {
-          console.error('Failed to fetch stylesheet:', href);
+          console.error('Failed to fetch stylesheet:', href, error);
         }
       }
     }));
@@ -39,7 +49,12 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const imageUrl = new URL(src, url).href;
-          const imageResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`);
+          const imageResponse = await fetch(`https://cors-anywhere.herokuapp.com/${imageUrl}`, {
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          if (!imageResponse.ok) throw new Error(`Failed to fetch image: ${imageResponse.status}`);
           const blob = await imageResponse.blob();
           const reader = new FileReader();
           await new Promise((resolve) => {
@@ -50,7 +65,7 @@ export async function cloneWebpage(url: string): Promise<string> {
             reader.readAsDataURL(blob);
           });
         } catch (error) {
-          console.error('Failed to fetch image:', src);
+          console.error('Failed to fetch image:', src, error);
         }
       }
     }));
@@ -62,19 +77,25 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const scriptUrl = new URL(src, url).href;
-          const scriptResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(scriptUrl)}`);
+          const scriptResponse = await fetch(`https://cors-anywhere.herokuapp.com/${scriptUrl}`, {
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          if (!scriptResponse.ok) throw new Error(`Failed to fetch script: ${scriptResponse.status}`);
           const scriptText = await scriptResponse.text();
           const newScript = doc.createElement('script');
           newScript.textContent = scriptText;
           script.parentNode?.replaceChild(newScript, script);
         } catch (error) {
-          console.error('Failed to fetch script:', src);
+          console.error('Failed to fetch script:', src, error);
         }
       }
     }));
 
     return doc.documentElement.outerHTML;
   } catch (error) {
-    throw new Error('Failed to clone webpage');
+    console.error('Cloning error:', error);
+    throw new Error(error instanceof Error ? error.message : 'Failed to clone webpage');
   }
 }
