@@ -29,7 +29,6 @@ export async function cloneWebpage(url: string): Promise<string> {
       } catch (error) {
         console.log(`Attempt ${i + 1} failed for ${url}:`, error);
         if (i === attempts - 1) throw error;
-        // Wait before retrying (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
@@ -65,28 +64,44 @@ export async function cloneWebpage(url: string): Promise<string> {
     
     if (isBinary) {
       console.log(`All proxies failed for binary content: ${targetUrl}, keeping original URL`);
-      return null; // Return null for binary content to keep original URL
+      return null;
     }
     
     throw lastError || new Error('All proxy services failed');
   }
 
+  function processUrl(originalUrl: string, baseUrl: string): string {
+    try {
+      if (originalUrl.startsWith('data:')) return originalUrl;
+      const absoluteUrl = new URL(originalUrl, baseUrl).href;
+      return absoluteUrl;
+    } catch {
+      return originalUrl;
+    }
+  }
+
   try {
-    // Fetch the webpage
     const data = await fetchWithProxies(url);
     const html = data.contents;
 
-    // Create a DOM parser
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
 
-    // Process external stylesheets
+    // Process meta tags and ensure proper encoding
+    const metaTags = Array.from(doc.querySelectorAll('meta'));
+    metaTags.forEach(meta => {
+      if (meta.getAttribute('charset')) {
+        meta.setAttribute('charset', 'UTF-8');
+      }
+    });
+
+    // Process all external stylesheets
     const styleSheets = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
     await Promise.allSettled(styleSheets.map(async (stylesheet) => {
       const href = stylesheet.getAttribute('href');
       if (href) {
         try {
-          const cssUrl = new URL(href, url).href;
+          const cssUrl = processUrl(href, url);
           const cssData = await fetchWithProxies(cssUrl);
           const style = doc.createElement('style');
           style.textContent = cssData.contents;
@@ -97,27 +112,37 @@ export async function cloneWebpage(url: string): Promise<string> {
       }
     }));
 
-    // Process images
-    const images = Array.from(doc.querySelectorAll('img'));
-    await Promise.allSettled(images.map(async (img) => {
-      const src = img.getAttribute('src');
-      if (src) {
+    // Process inline styles with url() references
+    const styleElements = Array.from(doc.querySelectorAll('style'));
+    styleElements.forEach(style => {
+      if (style.textContent) {
+        style.textContent = style.textContent.replace(
+          /url\(['"]?([^'")\s]+)['"]?\)/g,
+          (match, p1) => `url("${processUrl(p1, url)}")`
+        );
+      }
+    });
+
+    // Process all images and other media
+    const mediaElements = Array.from(doc.querySelectorAll('img, video, audio, source'));
+    await Promise.allSettled(mediaElements.map(async (element) => {
+      const srcAttr = element.getAttribute('src') || element.getAttribute('srcset');
+      if (srcAttr) {
         try {
-          const imageUrl = new URL(src, url).href;
-          const blob = await fetchWithProxies(imageUrl, true);
+          const mediaUrl = processUrl(srcAttr, url);
+          const blob = await fetchWithProxies(mediaUrl, true);
           if (blob) {
             const reader = new FileReader();
             await new Promise((resolve) => {
               reader.onload = () => {
-                img.src = reader.result as string;
+                element.setAttribute('src', reader.result as string);
                 resolve(null);
               };
               reader.readAsDataURL(blob);
             });
           }
         } catch (error) {
-          console.error('Failed to fetch image:', src);
-          // Keep original src
+          console.error(`Failed to fetch media:`, srcAttr);
         }
       }
     }));
@@ -128,17 +153,58 @@ export async function cloneWebpage(url: string): Promise<string> {
       const src = script.getAttribute('src');
       if (src) {
         try {
-          const scriptUrl = new URL(src, url).href;
+          const scriptUrl = processUrl(src, url);
           const scriptData = await fetchWithProxies(scriptUrl);
           const newScript = doc.createElement('script');
           newScript.textContent = scriptData.contents;
           script.parentNode?.replaceChild(newScript, script);
         } catch (error) {
           console.error('Failed to fetch script:', src);
-          // Keep original script tag
         }
       }
     }));
+
+    // Process favicons and other link elements
+    const linkElements = Array.from(doc.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]'));
+    await Promise.allSettled(linkElements.map(async (link) => {
+      const href = link.getAttribute('href');
+      if (href) {
+        try {
+          const iconUrl = processUrl(href, url);
+          const blob = await fetchWithProxies(iconUrl, true);
+          if (blob) {
+            const reader = new FileReader();
+            await new Promise((resolve) => {
+              reader.onload = () => {
+                link.setAttribute('href', reader.result as string);
+                resolve(null);
+              };
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch (error) {
+          console.error('Failed to fetch icon:', href);
+        }
+      }
+    }));
+
+    // Process background images in inline styles
+    const elementsWithStyle = Array.from(doc.querySelectorAll('[style]'));
+    elementsWithStyle.forEach(element => {
+      const style = element.getAttribute('style');
+      if (style) {
+        const newStyle = style.replace(
+          /url\(['"]?([^'")\s]+)['"]?\)/g,
+          (match, p1) => `url("${processUrl(p1, url)}")`
+        );
+        element.setAttribute('style', newStyle);
+      }
+    });
+
+    // Add base tag to handle relative URLs that weren't processed
+    const baseTag = doc.createElement('base');
+    baseTag.href = url;
+    doc.head.insertBefore(baseTag, doc.head.firstChild);
 
     return doc.documentElement.outerHTML;
   } catch (error) {
