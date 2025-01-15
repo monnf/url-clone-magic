@@ -1,19 +1,17 @@
 export async function cloneWebpage(url: string): Promise<string> {
   try {
-    // Using cors-anywhere as an alternative proxy
-    const proxyUrl = `https://cors-anywhere.herokuapp.com/${url}`;
+    // Using allorigins.win as a CORS proxy
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}&charset=UTF-8`;
     
     // Fetch the webpage
-    const response = await fetch(proxyUrl, {
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest'
-      }
-    });
+    const response = await fetch(proxyUrl);
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    const html = await response.text();
+
+    const data = await response.json();
+    const html = data.contents;
 
     // Create a DOM parser
     const parser = new DOMParser();
@@ -26,11 +24,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (href) {
         try {
           const cssUrl = new URL(href, url).href;
-          const cssResponse = await fetch(`https://cors-anywhere.herokuapp.com/${cssUrl}`, {
-            headers: {
-              'X-Requested-With': 'XMLHttpRequest'
-            }
-          });
+          const cssResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(cssUrl)}`);
           if (!cssResponse.ok) throw new Error(`Failed to fetch CSS: ${cssResponse.status}`);
           const cssText = await cssResponse.text();
           const style = doc.createElement('style');
@@ -49,11 +43,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const imageUrl = new URL(src, url).href;
-          const imageResponse = await fetch(`https://cors-anywhere.herokuapp.com/${imageUrl}`, {
-            headers: {
-              'X-Requested-With': 'XMLHttpRequest'
-            }
-          });
+          const imageResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`);
           if (!imageResponse.ok) throw new Error(`Failed to fetch image: ${imageResponse.status}`);
           const blob = await imageResponse.blob();
           const reader = new FileReader();
@@ -77,11 +67,7 @@ export async function cloneWebpage(url: string): Promise<string> {
       if (src) {
         try {
           const scriptUrl = new URL(src, url).href;
-          const scriptResponse = await fetch(`https://cors-anywhere.herokuapp.com/${scriptUrl}`, {
-            headers: {
-              'X-Requested-With': 'XMLHttpRequest'
-            }
-          });
+          const scriptResponse = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(scriptUrl)}`);
           if (!scriptResponse.ok) throw new Error(`Failed to fetch script: ${scriptResponse.status}`);
           const scriptText = await scriptResponse.text();
           const newScript = doc.createElement('script');
